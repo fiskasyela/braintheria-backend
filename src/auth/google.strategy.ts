@@ -1,14 +1,29 @@
-import { Injectable } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
-import { Strategy, Profile, VerifyCallback } from 'passport-google-oauth20';
+import {
+  Strategy,
+  VerifyCallback,
+  StrategyOptions,
+} from 'passport-google-oauth20';
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
-  constructor() {
-    super({
-      clientID: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-      callbackURL: process.env.OAUTH_CALLBACK_URL!,
+  constructor(private readonly configService: ConfigService) {
+    const clientID = configService.get<string>('GOOGLE_CLIENT_ID');
+    const clientSecret = configService.get<string>('GOOGLE_CLIENT_SECRET');
+    const callbackURL = configService.get<string>('GOOGLE_CALLBACK_URL');
+
+    // console.log('[INIT] GoogleStrategy initialized with:', {
+    //   clientID,
+    //   clientSecret: clientSecret ? '***' : undefined,
+    //   callbackURL,
+    // });
+
+    super(<StrategyOptions>{
+      clientID,
+      clientSecret,
+      callbackURL,
       scope: ['email', 'profile'],
     });
   }
@@ -16,11 +31,25 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
   async validate(
     accessToken: string,
     refreshToken: string,
-    profile: Profile,
+    profile: any,
     done: VerifyCallback,
   ): Promise<any> {
-    const { emails, displayName } = profile;
-    const email = emails?.[0]?.value;
-    done(null, { email, name: displayName });
+    // console.log('[VALIDATE] Google profile received:', {
+    //   id: profile.id,
+    //   email: profile.emails?.[0]?.value,
+    //   name: profile.displayName,
+    // });
+
+    const { name, emails, photos } = profile;
+    const user = {
+      email: emails?.[0]?.value,
+      firstName: name?.givenName,
+      lastName: name?.familyName,
+      picture: photos?.[0]?.value,
+      accessToken,
+    };
+
+    // console.log('[VALIDATE] User object created:', user);
+    done(null, user);
   }
 }

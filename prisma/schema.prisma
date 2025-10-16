@@ -6,13 +6,14 @@
 
 generator client {
   provider = "prisma-client-js"
-  output   = "../generated/prisma"
+  output   = "../node_modules/@prisma/client"
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
 
 model User {
   id             Int       @id @default(autoincrement())
@@ -71,3 +72,4 @@ model Ledger {
   user        User?     @relation(fields: [userId], references: [id])
   question    Question? @relation(fields: [questionId], references: [id])
 }
+
