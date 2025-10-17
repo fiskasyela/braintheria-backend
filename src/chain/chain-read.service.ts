@@ -4,7 +4,6 @@ import { base } from 'viem/chains';
 import { ethers } from 'ethers';
 import { QNA_ABI } from './qna.abi';
 
-
 @Injectable()
 export class ChainReadService implements OnModuleInit {
   private client; // viem client (for readContract)
@@ -37,9 +36,9 @@ export class ChainReadService implements OnModuleInit {
   //Runs once on boot
   async onModuleInit() {
     const network = await this.provider.getNetwork();
-    console.log(
-      `[ChainReadService] Connected to network: ${network.name} (chainId=${network.chainId})`,
-    );
+    // console.log(
+    //   `[ChainReadService] Connected to network: ${network.name} (chainId=${network.chainId})`,
+    // );
   }
 
   /**
@@ -82,7 +81,7 @@ export class ChainReadService implements OnModuleInit {
     try {
       const count = await this.client.readContract({
         ...this.contract,
-        functionName: 'questionCount', // adjust if your contract uses another name
+        functionName: 'questionCount',
       });
       return Number(count);
     } catch (error) {
@@ -105,5 +104,68 @@ export class ChainReadService implements OnModuleInit {
       );
       return '0';
     }
+  }
+
+  /**
+   * Get a single question by ID from the blockchain
+   */
+  async getQuestion(qId: number) {
+    try {
+      const q = await this.client.readContract({
+        ...this.contract,
+        functionName: 'getQuestion',
+        args: [BigInt(qId)],
+      });
+
+      // q is a tuple matching your Solidity struct Question
+      return {
+        id: qId,
+        asker: q[0],
+        token: q[1],
+        bounty: ethers.formatEther(q[2]),
+        deadline: Number(q[3]),
+        uri: q[4],
+        answered: q[5],
+      };
+    } catch (error) {
+      console.error(
+        `[ChainReadService] Failed to read getQuestion(${qId}):`,
+        error,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * List all on-chain questions (1..questionCount)
+   */
+  async listAllQuestions(): Promise<
+    {
+      id: number;
+      asker: string;
+      token: string;
+      bounty: string;
+      deadline: number;
+      uri: string;
+      answered: boolean;
+    }[]
+  > {
+    const total = await this.getQuestionCount();
+
+    const result: {
+      id: number;
+      asker: string;
+      token: string;
+      bounty: string;
+      deadline: number;
+      uri: string;
+      answered: boolean;
+    }[] = [];
+
+    for (let i = 1; i <= total; i++) {
+      const q = await this.getQuestion(i);
+      if (q) result.push(q);
+    }
+    return result;
   }
 }

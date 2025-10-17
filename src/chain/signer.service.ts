@@ -28,10 +28,10 @@ export class SignerService {
   // Debug connection
   async testConnection() {
     const network = await this.provider.getNetwork();
-    console.log(`[SignerService] Connected to chain ${network.chainId}`);
-    console.log(
-      `[SignerService] Using address: ${await this.signer.getAddress()}`,
-    );
+    // console.log(`[SignerService] Connected to chain ${network.chainId}`);
+    // console.log(
+    //   `[SignerService] Using address: ${await this.signer.getAddress()}`,
+    // );
   }
 
   getContract() {
@@ -45,7 +45,7 @@ export class SignerService {
     deadlineSeconds: number,
     uri: string,
   ) {
-    console.log(`[SignerService] Sending askQuestion()...`);
+    // console.log(`[SignerService] Sending askQuestion()...`);
 
     // Convert bounty to wei (BigInt)
     const bountyWei = ethers.parseEther(bountyEth.toString());
@@ -58,54 +58,53 @@ export class SignerService {
       { value: bountyWei }, // if payable (sending ETH bounty)
     );
 
-    console.log(`[SignerService] Tx sent: ${tx.hash}`);
+    // console.log(`[SignerService] Tx sent: ${tx.hash}`);
     const receipt = await tx.wait();
-    console.log(`[SignerService] Tx confirmed in block ${receipt.blockNumber}`);
+    // console.log(`[SignerService] Tx confirmed in block ${receipt.blockNumber}`);
     return receipt;
   }
-  
 
   async rewardUser(questionId: number, answererAddress: string) {
-    console.log(
-      `[SignerService] Rewarding ${answererAddress} for question ${questionId}...`,
-    );
+    // console.log(
+    //   `[SignerService] Rewarding ${answererAddress} for question ${questionId}...`,
+    // );
     const tx = await this.contract.rewardUser(
       BigInt(questionId),
       answererAddress,
     );
-    console.log(`[SignerService] Tx sent: ${tx.hash}`);
+    // console.log(`[SignerService] Tx sent: ${tx.hash}`);
     const receipt = await tx.wait();
-    console.log(
-      `[SignerService] Reward confirmed in block ${receipt.blockNumber}`,
-    );
+    // console.log(
+    //   `[SignerService] Reward confirmed in block ${receipt.blockNumber}`,
+    // );
     return receipt;
   }
 
   async answerQuestion(questionId: number, content: string) {
-    console.log(`[SignerService] Answering question ${questionId}...`);
+    // console.log(`[SignerService] Answering question ${questionId}...`);
     const tx = await this.contract.answerQuestion(BigInt(questionId), content);
-    console.log(`[SignerService] Tx sent: ${tx.hash}`);
+    // console.log(`[SignerService] Tx sent: ${tx.hash}`);
     const receipt = await tx.wait();
-    console.log(`[SignerService] Tx confirmed in block ${receipt.blockNumber}`);
+    // console.log(`[SignerService] Tx confirmed in block ${receipt.blockNumber}`);
     return receipt;
   }
 
   // New: fundBounty
   async fundBounty(questionId: number, amountWei: bigint) {
-    console.log(
-      `[SignerService] Funding bounty for Q${questionId} with ${amountWei} wei`,
-    );
+    // console.log(
+    //   `[SignerService] Funding bounty for Q${questionId} with ${amountWei} wei`,
+    // );
 
     // If your Solidity function is payable (like: function fundBounty(uint256 _qId) external payable)
     const tx = await this.contract.fundBounty(BigInt(questionId), {
       value: amountWei, // send ETH along
     });
 
-    console.log(`[SignerService] Tx sent: ${tx.hash}`);
+    // console.log(`[SignerService] Tx sent: ${tx.hash}`);
     const receipt = await tx.wait();
-    console.log(
-      `[SignerService] Fund confirmed in block ${receipt.blockNumber}`,
-    );
+    // console.log(
+    //   `[SignerService] Fund confirmed in block ${receipt.blockNumber}`,
+    // );
 
     return receipt.transactionHash;
   }

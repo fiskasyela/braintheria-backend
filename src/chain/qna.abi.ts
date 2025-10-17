@@ -64,4 +64,30 @@ export const QNA_ABI = [
     inputs: [{ name: 'qId', type: 'uint256' }],
     outputs: [{ type: 'uint256' }],
   },
+  {
+    type: 'function',
+    name: 'getQuestion',
+    stateMutability: 'view',
+    inputs: [{ name: 'id', type: 'uint256' }],
+    outputs: [
+      {
+        components: [
+          { name: 'asker', type: 'address' },
+          { name: 'token', type: 'address' },
+          { name: 'bounty', type: 'uint256' },
+          { name: 'deadline', type: 'uint40' },
+          { name: 'uri', type: 'string' },
+          { name: 'answered', type: 'bool' },
+        ],
+        type: 'tuple',
+      },
+    ],
+  },
+  {
+    type: 'function',
+    name: 'questionCount',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
 ] as const;

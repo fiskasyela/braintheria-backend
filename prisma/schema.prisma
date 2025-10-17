@@ -36,13 +36,16 @@ model Question {
   contentHash   String
   status        String    @default("Open") // 'Open' | 'Verified'
   chainQId      Int?      // On-chain Question ID (optional)
-  txHash        String?   // Add this: blockchain transaction hash
+  txHash        String?   // Blockchain transaction hash
   createdAt     DateTime  @default(now())
+  updatedAt     DateTime? @updatedAt
+    
 
   author        User      @relation(fields: [authorId], references: [id])
   answers       Answer[]
   ledgerEntries Ledger[]
 }
+
 
 
 model Answer {

@@ -6,6 +6,7 @@ import { publish } from '../sse/sse.controller';
 import { ChainReadService } from 'src/chain/chain-read.service';
 import { SignerService } from 'src/chain/signer.service';
 import { ethers } from 'ethers';
+import { UpdateQuestionDto } from '../dto/update-question.dto';
 
 @Injectable()
 export class QuestionsService {
@@ -22,7 +23,7 @@ export class QuestionsService {
     user: { id: number; walletAddress: string },
     dto: { title: string; bodyMd: string; bounty?: number; files?: any[] },
   ) {
-    console.log({ user });
+    // console.log({ user });
     // Prepare content hash + IPFS
     const contentHash = this.hashing.computeContentHash(dto.bodyMd);
     const pinned = await this.ipfs.pinJson({
@@ -56,12 +57,12 @@ export class QuestionsService {
 
     // Send blockchain transaction if bounty > 0
     let txHash: string | null = null;
+    const tokenAddress = ethers.ZeroAddress; // using ETH, not ERC20
+    const deadlineSeconds = Math.floor(Date.now() / 1000) + 86400; // +1 day
+    const uri = `ipfs://${pinned.cid}`;
 
     if (bounty > 0) {
       try {
-        const tokenAddress = ethers.ZeroAddress; // using ETH, not ERC20
-        const deadlineSeconds = Math.floor(Date.now() / 1000) + 86400; // +1 day
-        const uri = `ipfs://${pinned.cid}`;
         const tx = await this.signerService.askQuestion(
           tokenAddress,
           bounty,
@@ -108,11 +109,32 @@ export class QuestionsService {
     return { ...q, bountyWei: bounty.toString(), bestAId };
   }
 
-  // List questions (optionally by author)
   list(authorId?: number) {
     return this.prisma.question.findMany({
       where: authorId ? { authorId } : {},
       orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  listByMail(email?: string) {
+    let where = {};
+
+    if (email) {
+      where = { authorEmail: email };
+    }
+    return this.prisma.question.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async update(id: number, dto: UpdateQuestionDto) {
+    return this.prisma.question.update({
+      where: { id },
+      data: {
+        ...dto,
+        updatedAt: new Date(),
+      },
     });
   }
 }
