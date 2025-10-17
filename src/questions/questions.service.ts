@@ -5,6 +5,7 @@ import { HashingService } from '../hashing/hashing.service';
 import { publish } from '../sse/sse.controller';
 import { ChainReadService } from 'src/chain/chain-read.service';
 import { SignerService } from 'src/chain/signer.service';
+import { ethers } from 'ethers';
 
 @Injectable()
 export class QuestionsService {
@@ -21,6 +22,7 @@ export class QuestionsService {
     user: { id: number; walletAddress: string },
     dto: { title: string; bodyMd: string; bounty?: number; files?: any[] },
   ) {
+    console.log({ user });
     // Prepare content hash + IPFS
     const contentHash = this.hashing.computeContentHash(dto.bodyMd);
     const pinned = await this.ipfs.pinJson({
@@ -41,7 +43,7 @@ export class QuestionsService {
       }
     }
 
-    // 3️⃣ Store question in DB (temporary)
+    //Store question in DB (temporary)
     const question = await this.prisma.question.create({
       data: {
         authorId: user.id,
@@ -54,12 +56,17 @@ export class QuestionsService {
 
     // Send blockchain transaction if bounty > 0
     let txHash: string | null = null;
+
     if (bounty > 0) {
       try {
+        const tokenAddress = ethers.ZeroAddress; // using ETH, not ERC20
+        const deadlineSeconds = Math.floor(Date.now() / 1000) + 86400; // +1 day
+        const uri = `ipfs://${pinned.cid}`;
         const tx = await this.signerService.askQuestion(
-          user.walletAddress,
-          dto.title,
+          tokenAddress,
           bounty,
+          deadlineSeconds,
+          uri,
         );
         txHash = tx.hash;
       } catch (error) {

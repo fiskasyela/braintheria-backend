@@ -10,22 +10,22 @@ export class SignerService {
   private contract: ethers.Contract;
 
   constructor() {
-    // 1️⃣ Connect to blockchain node
+    //Connect to blockchain node
     this.provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
 
-    // 2️⃣ Load signer private key (server key)
+    //Load signer private key (server key)
     const privateKey = process.env.SERVER_SIGNER_PRIVATE_KEY;
     if (!privateKey)
       throw new Error('SERVER_SIGNER_PRIVATE_KEY missing in .env');
     this.signer = new ethers.Wallet(privateKey, this.provider);
 
-    // 3️⃣ Bind contract instance (deployed on Base Sepolia)
+    //Bind contract instance (deployed on Base Sepolia)
     const contractAddress = process.env.CONTRACT_ADDRESS;
     if (!contractAddress) throw new Error('CONTRACT_ADDRESS missing in .env');
     this.contract = new ethers.Contract(contractAddress, QNA_ABI, this.signer);
   }
 
-  // ✅ Debug connection
+  // Debug connection
   async testConnection() {
     const network = await this.provider.getNetwork();
     console.log(`[SignerService] Connected to chain ${network.chainId}`);
@@ -38,14 +38,32 @@ export class SignerService {
     return this.contract;
   }
 
-  async askQuestion(userAddress: string, title: string, bounty: number) {
-    console.log(`[SignerService] Sending askQuestion() for ${userAddress}...`);
-    const tx = await this.contract.askQuestion(userAddress, title, bounty);
+  // signer.service.ts
+  async askQuestion(
+    token: string,
+    bountyEth: number,
+    deadlineSeconds: number,
+    uri: string,
+  ) {
+    console.log(`[SignerService] Sending askQuestion()...`);
+
+    // Convert bounty to wei (BigInt)
+    const bountyWei = ethers.parseEther(bountyEth.toString());
+
+    const tx = await this.contract.askQuestion(
+      token, // address of token (use ethers.ZeroAddress for ETH)
+      bountyWei, // bounty amount in wei
+      deadlineSeconds, // deadline as uint40 (timestamp)
+      uri, // metadata / question content (e.g., IPFS URL)
+      { value: bountyWei }, // if payable (sending ETH bounty)
+    );
+
     console.log(`[SignerService] Tx sent: ${tx.hash}`);
     const receipt = await tx.wait();
     console.log(`[SignerService] Tx confirmed in block ${receipt.blockNumber}`);
     return receipt;
   }
+  
 
   async rewardUser(questionId: number, answererAddress: string) {
     console.log(
@@ -72,7 +90,7 @@ export class SignerService {
     return receipt;
   }
 
-  // ✅ New: fundBounty
+  // New: fundBounty
   async fundBounty(questionId: number, amountWei: bigint) {
     console.log(
       `[SignerService] Funding bounty for Q${questionId} with ${amountWei} wei`,

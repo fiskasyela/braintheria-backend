@@ -5,9 +5,10 @@ import { PrismaService } from '../common/prisma.service';
 import { IpfsModule } from '../ipfs/ipfs.module';
 import { HashingModule } from '../hashing/hashing.module';
 import { ChainModule } from '../chain/chain.module';
+import { UsersModule } from '../users/users.module';
 
 @Module({
-  imports: [IpfsModule, HashingModule, ChainModule],
+  imports: [IpfsModule, HashingModule, ChainModule, UsersModule],
   controllers: [QuestionsController],
   providers: [QuestionsService, PrismaService],
 })

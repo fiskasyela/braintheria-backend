@@ -15,16 +15,16 @@ export class ChainReadService implements OnModuleInit {
     const rpcUrl = process.env.RPC_URL;
     if (!rpcUrl) throw new Error('RPC_URL is missing in .env');
 
-    // 1️⃣ viem client (faster for readContract)
+    //viem client (faster for readContract)
     this.client = createPublicClient({
       chain: base, // use Base Sepolia preset (or Base Mainnet if you change RPC)
       transport: http(rpcUrl),
     });
 
-    // 2️⃣ ethers provider (for getBalance, etc.)
+    //thers provider (for getBalance, etc.)
     this.provider = new ethers.JsonRpcProvider(rpcUrl);
 
-    // 3️⃣ contract info
+    //contract info
     const contractAddress = process.env.CONTRACT_ADDRESS;
     if (!contractAddress) throw new Error('CONTRACT_ADDRESS missing in .env');
 
@@ -34,7 +34,7 @@ export class ChainReadService implements OnModuleInit {
     } as const;
   }
 
-  // ✅ Runs once on boot
+  //Runs once on boot
   async onModuleInit() {
     const network = await this.provider.getNetwork();
     console.log(
@@ -43,7 +43,7 @@ export class ChainReadService implements OnModuleInit {
   }
 
   /**
-   * 🔹 Get user's ETH balance (as string, in ETH)
+   * Get user's ETH balance (as string, in ETH)
    */
   async getEthBalance(address: string): Promise<string> {
     try {
@@ -56,7 +56,7 @@ export class ChainReadService implements OnModuleInit {
   }
 
   /**
-   * 🔹 Get bounty value for a given question ID from the contract
+   *Get bounty value for a given question ID from the contract
    */
   async bountyOf(qId: number): Promise<bigint> {
     try {
@@ -76,7 +76,7 @@ export class ChainReadService implements OnModuleInit {
   }
 
   /**
-   * 🔹 Get total number of questions (optional helper)
+    Get total number of questions (optional helper)
    */
   async getQuestionCount(): Promise<number> {
     try {
@@ -92,7 +92,7 @@ export class ChainReadService implements OnModuleInit {
   }
 
   /**
-   * 🔹 Get contract’s ETH balance (to monitor bounty pool)
+   *Get contract’s ETH balance (to monitor bounty pool)
    */
   async getContractBalance(): Promise<string> {
     try {
