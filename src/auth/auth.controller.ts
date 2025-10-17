@@ -25,10 +25,7 @@ export class AuthController {
 
   @Get('google')
   @UseGuards(AuthGuard('google'))
-  async googleAuth() {
-    // console.log('[ROUTE] /auth/google called → redirecting to Google consent');
-    /* passport redirects */
-  }
+  async googleAuth() {}
 
   @Get('google/callback')
   @UseGuards(AuthGuard('google'))

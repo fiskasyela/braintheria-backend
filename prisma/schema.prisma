@@ -28,20 +28,22 @@ model User {
 }
 
 model Question {
-  id           Int       @id @default(autoincrement())
-  authorId     Int
-  title        String
-  bodyMd       String
-  ipfsCid      String?
-  contentHash  String
-  status       String    @default("Open") // 'Open' | 'Verified'
-  chainQId     Int?
-  createdAt    DateTime  @default(now())
+  id            Int       @id @default(autoincrement())
+  authorId      Int
+  title         String
+  bodyMd        String
+  ipfsCid       String?
+  contentHash   String
+  status        String    @default("Open") // 'Open' | 'Verified'
+  chainQId      Int?      // On-chain Question ID (optional)
+  txHash        String?   // Add this: blockchain transaction hash
+  createdAt     DateTime  @default(now())
 
-  author       User      @relation(fields: [authorId], references: [id])
-  answers      Answer[]
+  author        User      @relation(fields: [authorId], references: [id])
+  answers       Answer[]
   ledgerEntries Ledger[]
 }
+
 
 model Answer {
   id          Int       @id @default(autoincrement())

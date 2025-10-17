@@ -34,10 +34,12 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
     profile: any,
     done: VerifyCallback,
   ): Promise<any> {
+    
     // console.log('[VALIDATE] Google profile received:', {
     //   id: profile.id,
     //   email: profile.emails?.[0]?.value,
     //   name: profile.displayName,
+    //   accessToken,
     // });
 
     const { name, emails, photos } = profile;
