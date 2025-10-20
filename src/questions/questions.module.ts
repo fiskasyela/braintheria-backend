@@ -6,9 +6,10 @@ import { IpfsModule } from '../ipfs/ipfs.module';
 import { HashingModule } from '../hashing/hashing.module';
 import { ChainModule } from '../chain/chain.module';
 import { UsersModule } from '../users/users.module';
+import { LedgerModule } from 'src/ledger/ledger.module';
 
 @Module({
-  imports: [IpfsModule, HashingModule, ChainModule, UsersModule],
+  imports: [IpfsModule, HashingModule, ChainModule, UsersModule, LedgerModule],
   controllers: [QuestionsController],
   providers: [QuestionsService, PrismaService],
 })

@@ -13,6 +13,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { AuthService } from './auth.service';
 import { UsersService } from '../users/users.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { ethers } from 'ethers';
 
 @Controller('auth')
 export class AuthController {
@@ -73,7 +74,35 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   async me(@Req() req: any) {
     const userId = req.user.sub;
-    return this.users.getById(userId);
+    const user = await this.users.getById(userId);
+
+    if (!user) {
+      throw new Error('User not found.');
+    }
+
+    let walletBalance: {
+      address: string;
+      wei: string;
+      eth: string;
+    } | null = null;
+
+    if (user.primaryWallet) {
+      const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
+      const balanceWei = await provider.getBalance(user.primaryWallet);
+      const balanceEth = ethers.formatEther(balanceWei);
+      walletBalance = {
+        address: user.primaryWallet,
+        wei: balanceWei.toString(),
+        eth: balanceEth,
+      };
+    }
+
+    return {
+      id: user.id,
+      email: user.email,
+      primaryWallet: user.primaryWallet,
+      walletBalance,
+    };
   }
 
   @Patch('me/wallet')

@@ -1,5 +1,5 @@
 // signer.service.ts
-import { Injectable } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { ethers } from 'ethers';
 import { QNA_ABI } from './qna.abi';
 
@@ -10,102 +10,132 @@ export class SignerService {
   private contract: ethers.Contract;
 
   constructor() {
-    //Connect to blockchain node
-    this.provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
-
-    //Load signer private key (server key)
+    // Connect to blockchain node
+    const rpcUrl = process.env.RPC_URL;
     const privateKey = process.env.SERVER_SIGNER_PRIVATE_KEY;
+    const contractAddress = process.env.CONTRACT_ADDRESS;
+
+    if (!rpcUrl) throw new Error('RPC_URL missing in .env');
     if (!privateKey)
       throw new Error('SERVER_SIGNER_PRIVATE_KEY missing in .env');
-    this.signer = new ethers.Wallet(privateKey, this.provider);
-
-    //Bind contract instance (deployed on Base Sepolia)
-    const contractAddress = process.env.CONTRACT_ADDRESS;
     if (!contractAddress) throw new Error('CONTRACT_ADDRESS missing in .env');
+
+    this.provider = new ethers.JsonRpcProvider(rpcUrl);
+    this.signer = new ethers.Wallet(privateKey, this.provider);
     this.contract = new ethers.Contract(contractAddress, QNA_ABI, this.signer);
   }
 
-  // Debug connection
+  // Optional debugging connection info
   async testConnection() {
     const network = await this.provider.getNetwork();
-    // console.log(`[SignerService] Connected to chain ${network.chainId}`);
-    // console.log(
-    //   `[SignerService] Using address: ${await this.signer.getAddress()}`,
-    // );
+    console.log(`[SignerService] Connected to chain: ${network.chainId}`);
+    console.log(
+      `[SignerService] Using address: ${await this.signer.getAddress()}`,
+    );
   }
 
   getContract() {
     return this.contract;
   }
 
-  // signer.service.ts
+  /**
+   * Ask a new question on-chain with optional ETH bounty.
+   */
   async askQuestion(
-    token: string,
-    bountyEth: number,
-    deadlineSeconds: number,
+    tokenAddress: string,
+    bountyWei: bigint,
+    deadline: number,
     uri: string,
   ) {
-    // console.log(`[SignerService] Sending askQuestion()...`);
+    try {
+      console.log('🟢 Sending askQuestion tx...');
 
-    // Convert bounty to wei (BigInt)
-    const bountyWei = ethers.parseEther(bountyEth.toString());
+      const tx = await this.contract.askQuestion(
+        tokenAddress,
+        bountyWei,
+        deadline,
+        uri,
+        {
+          value: bountyWei, // ETH bounty
+          gasLimit: 3_000_000,
+        },
+      );
 
-    const tx = await this.contract.askQuestion(
-      token, // address of token (use ethers.ZeroAddress for ETH)
-      bountyWei, // bounty amount in wei
-      deadlineSeconds, // deadline as uint40 (timestamp)
-      uri, // metadata / question content (e.g., IPFS URL)
-      { value: bountyWei }, // if payable (sending ETH bounty)
-    );
+      console.log(`⏳ Waiting for confirmation... TX Hash: ${tx.hash}`);
+      const receipt = await tx.wait();
 
-    // console.log(`[SignerService] Tx sent: ${tx.hash}`);
-    const receipt = await tx.wait();
-    // console.log(`[SignerService] Tx confirmed in block ${receipt.blockNumber}`);
-    return receipt;
+      // Parse event QuestionAsked(uint256 indexed questionId, ...)
+      let emittedQId: number | null = null;
+
+      for (const log of receipt.logs) {
+        try {
+          const parsed = this.contract.interface.parseLog(log);
+          if (parsed && parsed.name === 'QuestionAsked') {
+            const qid =
+              parsed.args.questionId ?? parsed.args.qid ?? parsed.args[0];
+            emittedQId = Number(qid);
+            console.log(
+              `✅ Event parsed: QuestionAsked => questionId=${emittedQId}`,
+            );
+            break;
+          }
+        } catch {
+          // skip unrelated logs
+        }
+      }
+
+      if (emittedQId === null) {
+        console.warn('⚠️ No QuestionAsked event found in transaction logs.');
+      }
+
+      return { tx, receipt, chainQId: emittedQId };
+    } catch (err) {
+      console.error('❌ askQuestion failed:', err);
+      throw new BadRequestException('Failed to send askQuestion transaction');
+    }
+  }
+
+  async fundMore(chainQId: number, addWei: bigint) {
+    const tx = await this.contract.fundMore(chainQId, addWei, {
+      value: addWei,
+    });
+    return await tx.wait();
+  }
+
+  async reduceBounty(chainQId: number, reduceWei: bigint) {
+    const tx = await this.contract.reduceBounty(chainQId, reduceWei);
+    return await tx.wait();
+  }
+
+  async cancelQuestion(chainQId: number) {
+    const tx = await this.contract.cancelQuestion(chainQId);
+    return await tx.wait();
   }
 
   async rewardUser(questionId: number, answererAddress: string) {
-    // console.log(
-    //   `[SignerService] Rewarding ${answererAddress} for question ${questionId}...`,
-    // );
+    if (!answererAddress)
+      throw new BadRequestException('Missing wallet address');
+    console.log(`🔸 Rewarding ${answererAddress} for question ${questionId}`);
     const tx = await this.contract.rewardUser(
       BigInt(questionId),
       answererAddress,
     );
-    // console.log(`[SignerService] Tx sent: ${tx.hash}`);
     const receipt = await tx.wait();
-    // console.log(
-    //   `[SignerService] Reward confirmed in block ${receipt.blockNumber}`,
-    // );
+    console.log(`✅ Reward confirmed in block ${receipt.blockNumber}`);
     return receipt;
   }
 
   async answerQuestion(questionId: number, content: string) {
-    // console.log(`[SignerService] Answering question ${questionId}...`);
     const tx = await this.contract.answerQuestion(BigInt(questionId), content);
-    // console.log(`[SignerService] Tx sent: ${tx.hash}`);
     const receipt = await tx.wait();
-    // console.log(`[SignerService] Tx confirmed in block ${receipt.blockNumber}`);
     return receipt;
   }
 
-  // New: fundBounty
   async fundBounty(questionId: number, amountWei: bigint) {
-    // console.log(
-    //   `[SignerService] Funding bounty for Q${questionId} with ${amountWei} wei`,
-    // );
-
-    // If your Solidity function is payable (like: function fundBounty(uint256 _qId) external payable)
     const tx = await this.contract.fundBounty(BigInt(questionId), {
-      value: amountWei, // send ETH along
+      value: amountWei,
     });
-
-    // console.log(`[SignerService] Tx sent: ${tx.hash}`);
     const receipt = await tx.wait();
-    // console.log(
-    //   `[SignerService] Fund confirmed in block ${receipt.blockNumber}`,
-    // );
-
     return receipt.transactionHash;
   }
 }

@@ -9,6 +9,10 @@ import {
   Request,
   BadRequestException,
   Patch,
+  Delete,
+  ForbiddenException,
+  NotFoundException,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { QuestionsService } from './questions.service';
 import { AskDto } from '../dto/ask.dto';
@@ -30,15 +34,11 @@ export class QuestionsController {
   async create(@Body() dto: AskDto, @Request() req) {
     const user = await this.usersService.getById(req.user.sub);
 
-    if (!user) {
-      throw new BadRequestException('User not found.');
-    }
-
-    if (!user.primaryWallet) {
+    if (!user) throw new BadRequestException('User not found.');
+    if (!user.primaryWallet)
       throw new BadRequestException(
         'User wallet not connected. Please connect your wallet before posting a question with a bounty.',
       );
-    }
 
     const userQuestion = {
       id: user.id,
@@ -52,11 +52,7 @@ export class QuestionsController {
   @UseGuards(JwtAuthGuard)
   async getMyQuestions(@Request() req) {
     const user = await this.usersService.getById(req.user.sub);
-
-    if (!user) {
-      throw new BadRequestException('User not found.');
-    }
-
+    if (!user) throw new BadRequestException('User not found.');
     return this.svc.list(user.id);
   }
 
@@ -96,27 +92,61 @@ export class QuestionsController {
     @Request() req,
   ) {
     const user = await this.usersService.getById(req.user.sub);
-
-    if (!user) {
-      throw new BadRequestException('User not found.');
-    }
+    if (!user) throw new BadRequestException('User not found.');
 
     const question = await this.svc.getById(Number(id));
+    if (!question) throw new NotFoundException('Question not found.');
 
-    if (!question) {
-      throw new BadRequestException('Question not found.');
-    }
+    if (question.authorId !== user.id)
+      throw new ForbiddenException('You can only edit your own question.');
 
-    if (question.authorId !== user.id) {
-      throw new BadRequestException('You can only edit your own question.');
-    }
-
-    if (question.status === 'closed') {
-      throw new BadRequestException(
-        'Question is already closed and cannot be edited.',
-      );
-    }
+    if (question.status !== 'Open')
+      throw new BadRequestException('Only open questions can be edited.');
 
     return this.svc.update(Number(id), dto);
+  }
+
+  @Delete(':id')
+  @UseGuards(JwtAuthGuard)
+  async delete(@Param('id') id: string, @Request() req) {
+    const user = await this.usersService.getById(req.user.sub);
+    if (!user) throw new BadRequestException('User not found.');
+
+    const question = await this.svc.getById(Number(id));
+    if (!question) throw new NotFoundException('Question not found.');
+
+    if (question.authorId !== user.id)
+      throw new ForbiddenException('You can only delete your own question.');
+
+    if (question.status !== 'Open')
+      throw new BadRequestException('Only open questions can be deleted.');
+
+    return this.svc.delete(Number(id));
+  }
+
+  @Patch(':questionId/approve-answer/:answerId')
+  @UseGuards(JwtAuthGuard)
+  async approveAnswer(
+    @Param('questionId') questionId: number,
+    @Param('answerId') answerId: number,
+    @Request() req,
+  ) {
+    const userId = req.user.sub;
+    return this.svc.approveAnswer(+questionId, +answerId, userId);
+  }
+
+  @Patch(':id/bounty/add')
+  @UseGuards(JwtAuthGuard)
+  add(@Param('id', ParseIntPipe) id: number, @Body() body: { addEth: number }) {
+    return this.svc.addBounty(id, body.addEth);
+  }
+
+  @Patch(':id/bounty/reduce')
+  @UseGuards(JwtAuthGuard)
+  reduce(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { reduceEth: number },
+  ) {
+    return this.svc.reduceBounty(id, body.reduceEth);
   }
 }

@@ -1,4 +1,9 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
 import { IpfsService } from '../ipfs/ipfs.service';
 import { HashingService } from '../hashing/hashing.service';
@@ -7,6 +12,7 @@ import { ChainReadService } from 'src/chain/chain-read.service';
 import { SignerService } from 'src/chain/signer.service';
 import { ethers } from 'ethers';
 import { UpdateQuestionDto } from '../dto/update-question.dto';
+import { LedgerService } from 'src/ledger/ledger.service';
 
 @Injectable()
 export class QuestionsService {
@@ -16,6 +22,7 @@ export class QuestionsService {
     private hashing: HashingService,
     private chainRead: ChainReadService,
     private signerService: SignerService,
+    private ledgerService: LedgerService,
   ) {}
 
   // Create question + send on-chain tx (optional bounty)
@@ -23,8 +30,6 @@ export class QuestionsService {
     user: { id: number; walletAddress: string },
     dto: { title: string; bodyMd: string; bounty?: number; files?: any[] },
   ) {
-    // console.log({ user });
-    // Prepare content hash + IPFS
     const contentHash = this.hashing.computeContentHash(dto.bodyMd);
     const pinned = await this.ipfs.pinJson({
       title: dto.title,
@@ -32,19 +37,10 @@ export class QuestionsService {
       files: dto.files || [],
     });
 
-    //Optional bounty check
-    const bounty = dto.bounty || 0;
-    if (bounty > 0) {
-      const balanceStr = await this.chainRead.getEthBalance(user.walletAddress);
-      const balance = parseFloat(balanceStr);
-      if (balance < bounty) {
-        throw new BadRequestException(
-          `Insufficient balance. You have ${balance} ETH, need ${bounty} ETH.`,
-        );
-      }
-    }
+    const bountyEth = dto.bounty ?? 0;
+    const bountyWei = ethers.parseEther(bountyEth.toString()); // bigint
 
-    //Store question in DB (temporary)
+    // Create DB row first
     const question = await this.prisma.question.create({
       data: {
         authorId: user.id,
@@ -52,46 +48,68 @@ export class QuestionsService {
         bodyMd: dto.bodyMd,
         ipfsCid: pinned.cid,
         contentHash,
+        bountyAmountWei: '0',
       },
     });
 
-    // Send blockchain transaction if bounty > 0
-    let txHash: string | null = null;
-    const tokenAddress = ethers.ZeroAddress; // using ETH, not ERC20
-    const deadlineSeconds = Math.floor(Date.now() / 1000) + 86400; // +1 day
-    const uri = `ipfs://${pinned.cid}`;
+    let txHash: string | undefined = undefined;
+    let chainQId: number | null = null;
 
-    if (bounty > 0) {
+    if (bountyEth > 0) {
+      const tokenAddress = ethers.ZeroAddress;
+      const deadlineSeconds = Math.floor(Date.now() / 1000) + 86400;
+      const uri = `ipfs://${pinned.cid}`;
+
       try {
-        const tx = await this.signerService.askQuestion(
+        const {
+          tx,
+          receipt,
+          chainQId: emittedQId,
+        } = await this.signerService.askQuestion(
           tokenAddress,
-          bounty,
+          bountyWei,
           deadlineSeconds,
           uri,
         );
         txHash = tx.hash;
+        chainQId = emittedQId ?? null;
+
+        await this.ledgerService.addEntry({
+          userId: user.id,
+          questionId: question.id,
+          kind: 'BountyEscrowed',
+          amountWei: bountyWei.toString(),
+          txHash, // ✅ string | undefined
+          token: 'ETH',
+        });
       } catch (error) {
         console.error('Error sending askQuestion tx:', error);
         throw new BadRequestException('Failed to send askQuestion transaction');
       }
     }
 
-    // Update question with tx hash (if exists)
     const updated = await this.prisma.question.update({
       where: { id: question.id },
-      data: { txHash },
+      data: {
+        txHash,
+        chainQId,
+        bountyAmountWei: bountyEth > 0 ? bountyWei.toString() : '0',
+      },
     });
 
-    //Publish event for SSE clients
     publish('question:created', { id: updated.id });
 
-    // 7Fetch current bounty (read from blockchain)
-    const bountyWei = (await this.chainRead.bountyOf(updated.id)).toString();
+    // Read live bounty from chain using chainQId
+    let bountyOnChain = '0';
+    if (updated.chainQId != null) {
+      bountyOnChain = (
+        await this.chainRead.bountyOf(updated.chainQId)
+      ).toString();
+    }
 
-    return { ...updated, bountyWei };
+    return { ...updated, bountyWei: bountyOnChain };
   }
 
-  //Get question by ID
   async getById(id: number) {
     const q = await this.prisma.question.findUnique({
       where: { id },
@@ -103,10 +121,13 @@ export class QuestionsService {
     });
     if (!q) return null;
 
-    const bounty = await this.chainRead.bountyOf(q.id);
     const bestAId = q.answers.find((a) => a.isBest)?.id || 0;
+    let bountyWei = '0';
+    if (q.chainQId != null) {
+      bountyWei = (await this.chainRead.bountyOf(q.chainQId)).toString();
+    }
 
-    return { ...q, bountyWei: bounty.toString(), bestAId };
+    return { ...q, bountyWei, bestAId };
   }
 
   list(authorId?: number) {
@@ -129,6 +150,13 @@ export class QuestionsService {
   }
 
   async update(id: number, dto: UpdateQuestionDto) {
+    const question = await this.prisma.question.findUnique({ where: { id } });
+    if (!question) throw new NotFoundException('Question not found.');
+    if (question.status !== 'Open') {
+      throw new BadRequestException('Only open questions can be edited.');
+    }
+
+    // Only text/content edit here. Bounty edits use separate endpoints below.
     return this.prisma.question.update({
       where: { id },
       data: {
@@ -136,5 +164,188 @@ export class QuestionsService {
         updatedAt: new Date(),
       },
     });
+  }
+
+  async addBounty(id: number, addEth: number) {
+    const q = await this.prisma.question.findUnique({ where: { id } });
+    if (!q) throw new NotFoundException('Question not found.');
+    if (q.status !== 'Open')
+      throw new BadRequestException('Question not open.');
+    if (q.chainQId == null)
+      throw new BadRequestException('On-chain question not found.');
+    if (addEth <= 0) throw new BadRequestException('addEth must be > 0');
+
+    const addWei = ethers.parseEther(addEth.toString());
+    const receipt = await this.signerService.fundMore(q.chainQId, addWei);
+
+    const newTotalWei = (BigInt(q.bountyAmountWei) + addWei).toString();
+    await this.prisma.question.update({
+      where: { id },
+      data: { bountyAmountWei: newTotalWei },
+    });
+
+    await this.ledgerService.addEntry({
+      userId: q.authorId,
+      questionId: q.id,
+      kind: 'BountyTopUp',
+      amountWei: addWei.toString(),
+      txHash: receipt.transactionHash,
+    });
+
+    return {
+      success: true,
+      txHash: receipt.transactionHash,
+      bountyAmountWei: newTotalWei,
+    };
+  }
+
+  async reduceBounty(id: number, reduceEth: number) {
+    const q = await this.prisma.question.findUnique({ where: { id } });
+    if (!q) throw new NotFoundException('Question not found.');
+    if (q.status !== 'Open')
+      throw new BadRequestException('Question not open.');
+    if (q.chainQId == null)
+      throw new BadRequestException('On-chain question not found.');
+    if (reduceEth <= 0) throw new BadRequestException('reduceEth must be > 0');
+
+    const reduceWei = ethers.parseEther(reduceEth.toString());
+    if (reduceWei > BigInt(q.bountyAmountWei)) {
+      throw new BadRequestException('Cannot reduce below zero.');
+    }
+
+    const receipt = await this.signerService.reduceBounty(
+      q.chainQId,
+      reduceWei,
+    );
+    const newTotalWei = (BigInt(q.bountyAmountWei) - reduceWei).toString();
+    await this.prisma.question.update({
+      where: { id },
+      data: { bountyAmountWei: newTotalWei },
+    });
+
+    await this.ledgerService.addEntry({
+      userId: q.authorId,
+      questionId: q.id,
+      kind: 'BountyReduced',
+      amountWei: reduceWei.toString(),
+      txHash: receipt.transactionHash,
+    });
+
+    return {
+      success: true,
+      txHash: receipt.transactionHash,
+      bountyAmountWei: newTotalWei,
+    };
+  }
+
+  async delete(id: number) {
+    const q = await this.prisma.question.findUnique({ where: { id } });
+    if (!q) throw new NotFoundException('Question not found.');
+
+    if (q.status !== 'Open') {
+      throw new BadRequestException('Only open questions can be closed.');
+    }
+
+    let txHash: string | undefined = undefined;
+
+    // If question has on-chain bounty, refund it
+    if (q.chainQId != null && BigInt(q.bountyAmountWei) > 0n) {
+      const receipt = await this.signerService.cancelQuestion(q.chainQId);
+      txHash = receipt.transactionHash;
+
+      await this.ledgerService.addEntry({
+        userId: q.authorId,
+        questionId: q.id,
+        kind: 'BountyRefund',
+        amountWei: q.bountyAmountWei,
+        txHash, // ✅ now guaranteed string | undefined
+      });
+    }
+
+    // Soft delete
+    const closed = await this.prisma.question.update({
+      where: { id },
+      data: {
+        status: 'Closed',
+        updatedAt: new Date(),
+      },
+    });
+
+    publish('question:closed', { id: closed.id });
+
+    return {
+      message: 'Question closed successfully.',
+      txHash,
+      status: closed.status,
+    };
+  }
+
+  async approveAnswer(
+    questionId: number,
+    answerId: number,
+    approverId: number,
+  ) {
+    const question = await this.prisma.question.findUnique({
+      where: { id: questionId },
+      include: { author: true },
+    });
+
+    if (!question) throw new NotFoundException('Question not found');
+    if (question.authorId !== approverId)
+      throw new ForbiddenException(
+        'Only the question author can approve an answer',
+      );
+
+    if (question.status === 'Verified')
+      throw new BadRequestException('Question already verified');
+
+    const answer = await this.prisma.answer.findUnique({
+      where: { id: answerId },
+      include: { author: { select: { primaryWallet: true, id: true } } },
+    });
+
+    if (!answer) throw new NotFoundException('Answer not found');
+    if (answer.questionId !== questionId)
+      throw new BadRequestException('Answer does not belong to this question');
+
+    // Update DB states
+    await this.prisma.answer.update({
+      where: { id: answerId },
+      data: { isBest: true },
+    });
+
+    await this.prisma.question.update({
+      where: { id: questionId },
+      data: { status: 'Verified' },
+    });
+
+    // Chain interaction — release bounty
+    if (!question.chainQId)
+      throw new BadRequestException(
+        'No on-chain question ID found for this question',
+      );
+
+    if (!answer.author.primaryWallet) {
+      throw new BadRequestException('Answer author has no connected wallet.');
+    }
+
+    const tx = await this.signerService.rewardUser(
+      question.chainQId,
+      answer.author.primaryWallet,
+    );
+
+    await this.ledgerService.addEntry({
+      userId: answer.author.id,
+      questionId: question.id,
+      kind: 'BountyRelease',
+      amountWei: question.bountyAmountWei,
+      txHash: tx.hash,
+    });
+
+    return {
+      success: true,
+      message: 'Bounty released successfully',
+      txHash: tx.hash,
+    };
   }
 }
