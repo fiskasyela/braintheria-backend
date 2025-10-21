@@ -79,7 +79,7 @@ export class QuestionsService {
           questionId: question.id,
           kind: 'BountyEscrowed',
           amountWei: bountyWei.toString(),
-          txHash, // ✅ string | undefined
+          txHash, //string | undefined
           token: 'ETH',
         });
       } catch (error) {
@@ -258,7 +258,7 @@ export class QuestionsService {
         questionId: q.id,
         kind: 'BountyRefund',
         amountWei: q.bountyAmountWei,
-        txHash, // ✅ now guaranteed string | undefined
+        txHash, //now guaranteed string | undefined
       });
     }
 
@@ -285,67 +285,86 @@ export class QuestionsService {
     answerId: number,
     approverId: number,
   ) {
-    const question = await this.prisma.question.findUnique({
-      where: { id: questionId },
-      include: { author: true },
-    });
+    return this.prisma.$transaction(async (tx) => {
+      const question = await tx.question.findUnique({
+        where: { id: questionId },
+        include: { author: true },
+      });
 
-    if (!question) throw new NotFoundException('Question not found');
-    if (question.authorId !== approverId)
-      throw new ForbiddenException(
-        'Only the question author can approve an answer',
+      if (!question) throw new NotFoundException('Question not found');
+      if (question.authorId !== approverId)
+        throw new ForbiddenException(
+          'Only the question author can approve an answer',
+        );
+      if (question.status === 'Verified')
+        throw new BadRequestException('Question already verified');
+
+      const answer = await tx.answer.findUnique({
+        where: { id: answerId },
+        include: { author: { select: { primaryWallet: true, id: true } } },
+      });
+
+      // console.log({
+      //   question,
+      //   answer,
+      // });
+
+      if (!answer) throw new NotFoundException('Answer not found');
+      if (answer.questionId !== questionId)
+        throw new BadRequestException(
+          'Answer does not belong to this question',
+        );
+      if (!answer.author.primaryWallet)
+        throw new BadRequestException('Answer author has no connected wallet.');
+
+      if (!question.chainQId)
+        throw new BadRequestException(
+          'No on-chain question ID found for this question',
+        );
+
+      if (question.chainQId == null)
+        throw new BadRequestException('No on-chain question ID found');
+      if (answer.chainAId == null)
+        throw new BadRequestException('No on-chain answer ID found');
+
+      // console.log({
+      //   chainQId: question.chainQId,
+      //   chainAId: answer.chainAId,
+      // });
+
+      // Chain interaction FIRST (before writing success to DB)
+      const txReceipt = await this.signerService.rewardUser(
+        question.chainQId,
+        answer.chainAId,
       );
 
-    if (question.status === 'Verified')
-      throw new BadRequestException('Question already verified');
+      //If chain succeeded, update DB
+      await tx.answer.update({
+        where: { id: answerId },
+        data: { isBest: true },
+      });
 
-    const answer = await this.prisma.answer.findUnique({
-      where: { id: answerId },
-      include: { author: { select: { primaryWallet: true, id: true } } },
+      await tx.question.update({
+        where: { id: questionId },
+        data: { status: 'Verified' },
+      });
+
+      await tx.ledger.create({
+        data: {
+          userId: answer.author.id,
+          questionId: question.id,
+          kind: 'BountyRelease',
+          amountWei: question.bountyAmountWei,
+          txHash: txReceipt.hash,
+          token: 'ETH',
+        },
+      });
+
+      return {
+        success: true,
+        message: 'Bounty released successfully',
+        txHash: txReceipt.hash,
+      };
     });
-
-    if (!answer) throw new NotFoundException('Answer not found');
-    if (answer.questionId !== questionId)
-      throw new BadRequestException('Answer does not belong to this question');
-
-    // Update DB states
-    await this.prisma.answer.update({
-      where: { id: answerId },
-      data: { isBest: true },
-    });
-
-    await this.prisma.question.update({
-      where: { id: questionId },
-      data: { status: 'Verified' },
-    });
-
-    // Chain interaction — release bounty
-    if (!question.chainQId)
-      throw new BadRequestException(
-        'No on-chain question ID found for this question',
-      );
-
-    if (!answer.author.primaryWallet) {
-      throw new BadRequestException('Answer author has no connected wallet.');
-    }
-
-    const tx = await this.signerService.rewardUser(
-      question.chainQId,
-      answer.author.primaryWallet,
-    );
-
-    await this.ledgerService.addEntry({
-      userId: answer.author.id,
-      questionId: question.id,
-      kind: 'BountyRelease',
-      amountWei: question.bountyAmountWei,
-      txHash: tx.hash,
-    });
-
-    return {
-      success: true,
-      message: 'Bounty released successfully',
-      txHash: tx.hash,
-    };
   }
 }

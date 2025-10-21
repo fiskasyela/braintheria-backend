@@ -35,7 +35,7 @@ export class AnswersController {
     @Body() dto: AnswerDto,
     @Request() req,
   ) {
-    console.log('🟢 Reached AnswersController.create');
+    // console.log(' Reached AnswersController.create');
 
     const id = Number(qId);
     if (isNaN(id)) throw new BadRequestException('Invalid question ID');
@@ -47,7 +47,6 @@ export class AnswersController {
   }
 
   //GET all answers for a question
-
   @Get(':qId')
   async getAnswers(@Param('qId', ParseIntPipe) qId: number) {
     const answers = await this.prisma.answer.findMany({

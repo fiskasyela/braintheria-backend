@@ -9,6 +9,7 @@ import { IpfsService } from '../ipfs/ipfs.service';
 import { HashingService } from '../hashing/hashing.service';
 import { AnswerDto } from '../dto/answer.dto';
 import { publish } from '../sse/sse.controller';
+import { SignerService } from 'src/chain/signer.service';
 
 @Injectable()
 export class AnswersService {
@@ -16,51 +17,29 @@ export class AnswersService {
     private prisma: PrismaService,
     private ipfs: IpfsService,
     private hashing: HashingService,
+    private signerService: SignerService,
   ) {}
 
   async create(qId: number, userId: number, dto: AnswerDto) {
-    console.log('🟢 [AnswerService.create] called with:', { qId, userId });
-
-    // --- Validate inputs ---
-    if (!qId || isNaN(qId)) {
+    if (!qId || isNaN(qId))
       throw new BadRequestException('Invalid question ID.');
-    }
-    if (!userId || isNaN(userId)) {
+    if (!userId || isNaN(userId))
       throw new BadRequestException('Invalid user ID.');
-    }
-    if (!dto?.bodyMd || dto.bodyMd.trim().length === 0) {
+    if (!dto?.bodyMd?.trim())
       throw new BadRequestException('Answer body cannot be empty.');
-    }
 
-    // --- Find question ---
+    // --- Find the question ---
     const question = await this.prisma.question.findUnique({
       where: { id: qId },
-      select: { id: true, authorId: true, status: true },
+      select: { id: true, authorId: true, status: true, chainQId: true },
     });
-
-    console.log('📘 Found question:', question);
-
-    if (!question) {
-      throw new NotFoundException('Question not found or already deleted.');
-    }
-
-    // --- Prevent self-answer ---
-    if (Number(question.authorId) === Number(userId)) {
-      console.warn('🚫 User attempted to answer own question', { qId, userId });
+    if (!question) throw new NotFoundException('Question not found.');
+    if (question.authorId === userId)
       throw new ForbiddenException('You cannot answer your own question.');
-    }
-
-    // --- Prevent answering closed/verified questions ---
-    if (question.status !== 'Open') {
-      console.warn('🔒 Attempt to answer non-open question:', {
-        qId,
-        status: question.status,
-      });
+    if (question.status !== 'Open')
       throw new BadRequestException('You can only answer open questions.');
-    }
 
     // --- Prepare IPFS data ---
-    console.log('📦 Computing content hash and uploading to IPFS...');
     const contentHash = this.hashing.computeContentHash(dto.bodyMd);
     const pinned = await this.ipfs.pinJson({
       questionId: qId,
@@ -68,10 +47,7 @@ export class AnswersService {
       files: dto.files || [],
     });
 
-    console.log('📡 IPFS pinned successfully:', pinned);
-
-    // --- Save to database ---
-    console.log('💾 Creating answer in database...');
+    // --- Save to DB first (temporary record) ---
     const answer = await this.prisma.answer.create({
       data: {
         questionId: qId,
@@ -82,21 +58,58 @@ export class AnswersService {
       },
     });
 
-    // --- Publish event for live updates ---
-    publish('answer:created', { id: answer.id, questionId: qId });
-    console.log('📢 Event published: answer:created', { answerId: answer.id });
+    // --- Sync to blockchain ---
+    if (!question.chainQId)
+      throw new BadRequestException(
+        'No on-chain question ID found for this question.',
+      );
 
-    // --- Return structured response ---
-    return {
-      success: true,
-      message: '✅ Answer created successfully.',
-      data: {
-        id: answer.id,
-        questionId: qId,
-        authorId: userId,
-        ipfsCid: pinned.cid,
-        createdAt: answer.createdAt,
-      },
-    };
+    try {
+      //  Call contract postAnswer(questionId, contentHash)
+      const tx = await this.signerService.answerQuestion(
+        question.chainQId,
+        contentHash,
+      );
+
+      const receipt = await tx.wait();
+      // console.log(' Answer posted on-chain:', receipt.hash);
+
+      // --- Extract the event AnswerPosted(answerId) ---
+      const event = receipt.logs
+        .map((log) => {
+          try {
+            return this.signerService.contract.interface.parseLog(log);
+          } catch {
+            return null;
+          }
+        })
+        .find((parsed) => parsed && parsed.name === 'AnswerPosted');
+
+      const chainAId = event?.args?.answerId?.toString();
+
+      // --- Update DB with chainAId ---
+      await this.prisma.answer.update({
+        where: { id: answer.id },
+        data: { chainAId: chainAId ? Number(chainAId) : null },
+      });
+
+      // --- Publish event for live updates ---
+      publish('answer:created', { id: answer.id, questionId: qId });
+
+      return {
+        success: true,
+        message: ' Answer created successfully and synced to blockchain.',
+        data: {
+          id: answer.id,
+          questionId: qId,
+          chainAId,
+          txHash: receipt.hash,
+          ipfsCid: pinned.cid,
+        },
+      };
+    } catch (error) {
+      console.error('❌ Failed to post answer on-chain:', error);
+      throw new BadRequestException('Failed to sync answer to blockchain');
+    }
   }
 }
