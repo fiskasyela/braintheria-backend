@@ -46,9 +46,17 @@ export class AuthController {
     }
 
     try {
+      const name =
+        guser.name?.toLowerCase().replace(/\s+/g, '-') ||
+        guser.email.split('@')[0];
+
+      // Create or update user record
+      const user = await this.auth.validateOrCreateUser({
+        ...guser,
+        name,
+      });
       // Create or validate the user in your DB
       // console.log('[CALLBACK] Validating or creating user in database...');
-      const user = await this.auth.validateOrCreateUser(guser);
       // console.log('[CALLBACK] User record:', user);
 
       // Generate JWT for frontend use
@@ -98,9 +106,10 @@ export class AuthController {
     }
 
     return {
-      id: user.id,
-      email: user.email,
-      primaryWallet: user.primaryWallet,
+      id: user?.id,
+      email: user?.email,
+      username: user?.name,
+      primaryWallet: user?.primaryWallet,
       walletBalance,
     };
   }

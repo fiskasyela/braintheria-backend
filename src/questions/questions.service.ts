@@ -130,11 +130,53 @@ export class QuestionsService {
     return { ...q, bountyWei, bestAId };
   }
 
-  list(authorId?: number) {
-    return this.prisma.question.findMany({
-      where: authorId ? { authorId } : {},
-      orderBy: { createdAt: 'desc' },
-    });
+  async list(params?: {
+    userId?: number;
+    page?: number;
+    limit?: number;
+    status?: string;
+  }) {
+    const page = params?.page ?? 1;
+    const limit = params?.limit ?? 10;
+    const where: any = {};
+
+    // Filter by user if provided
+    if (params?.userId) where.authorId = params.userId;
+
+    // Filter by status if valid
+    if (
+      params?.status &&
+      ['Open', 'Verified', 'Cancelled'].includes(params.status)
+    ) {
+      where.status = params.status;
+    }
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.question.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          author: {
+            select: { id: true, email: true, primaryWallet: true },
+          },
+        },
+      }),
+      this.prisma.question.count({ where }),
+    ]);
+
+    return {
+      data,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+        filter: params?.status ?? 'All',
+        userScoped: !!params?.userId,
+      },
+    };
   }
 
   listByMail(email?: string) {

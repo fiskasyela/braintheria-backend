@@ -50,10 +50,21 @@ export class QuestionsController {
 
   @Get('my')
   @UseGuards(JwtAuthGuard)
-  async getMyQuestions(@Request() req) {
+  async getMyQuestions(
+    @Request() req,
+    @Query('page') page = 1,
+    @Query('limit') limit = 10,
+    @Query('status') status?: string,
+  ) {
     const user = await this.usersService.getById(req.user.sub);
     if (!user) throw new BadRequestException('User not found.');
-    return this.svc.list(user.id);
+
+    return this.svc.list({
+      userId: user.id,
+      page: Number(page),
+      limit: Number(limit),
+      status,
+    });
   }
 
   @Get('chain')
@@ -69,8 +80,19 @@ export class QuestionsController {
   }
 
   @Get()
-  async list() {
-    return this.svc.list();
+  async list(
+    @Query('page') page = 1,
+    @Query('limit') limit = 10,
+    @Query('status') status?: string, // optional filter
+  ) {
+    const pageNumber = Number(page);
+    const limitNumber = Number(limit);
+
+    return this.svc.list({
+      page: pageNumber,
+      limit: limitNumber,
+      status,
+    });
   }
 
   @Get('by-email')
