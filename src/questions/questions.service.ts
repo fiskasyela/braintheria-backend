@@ -138,13 +138,19 @@ export class QuestionsService {
     page?: number;
     limit?: number;
     status?: string;
+    search?: string;
+    tokenUserId?: number; // ← ID from decoded token
   }) {
     const page = params?.page ?? 1;
     const limit = params?.limit ?? 10;
     const where: any = {};
 
-    if (params?.userId) where.authorId = params.userId;
+    // Filter by authorId
+    if (params?.userId) {
+      where.authorId = params.userId;
+    }
 
+    // Filter by status
     if (
       params?.status &&
       ['Open', 'Verified', 'Cancelled'].includes(params.status)
@@ -152,6 +158,15 @@ export class QuestionsService {
       where.status = params.status;
     }
 
+    // Search by search (in title or body)
+    if (params?.search) {
+      where.OR = [
+        { title: { contains: params.search, mode: 'insensitive' } },
+        { bodyMd: { contains: params.search, mode: 'insensitive' } },
+      ];
+    }
+
+    // Fetch data and count
     const [data, total] = await this.prisma.$transaction([
       this.prisma.question.findMany({
         where,
@@ -167,8 +182,14 @@ export class QuestionsService {
       this.prisma.question.count({ where }),
     ]);
 
+    // Add isAuthor field per question
+    const processedData = data.map((q) => ({
+      ...q,
+      isAuthor: params?.tokenUserId === q.authorId,
+    }));
+
     return {
-      data,
+      data: processedData,
       meta: {
         total,
         page,
@@ -176,6 +197,7 @@ export class QuestionsService {
         totalPages: Math.ceil(total / limit),
         filter: params?.status ?? 'All',
         userScoped: !!params?.userId,
+        search: params?.search ?? null,
       },
     };
   }
@@ -354,7 +376,6 @@ export class QuestionsService {
     if (!question.chainQId || !answer.chainAId)
       throw new BadRequestException('No on-chain IDs found');
 
-  
     const txReceipt = await this.signerService.rewardUser(
       question.chainQId,
       answer.chainAId,
