@@ -328,60 +328,39 @@ export class QuestionsService {
     answerId: number,
     approverId: number,
   ) {
-    return this.prisma.$transaction(async (tx) => {
-      const question = await tx.question.findUnique({
-        where: { id: questionId },
-        include: { author: true },
-      });
+    const question = await this.prisma.question.findUnique({
+      where: { id: questionId },
+      include: { author: true },
+    });
 
-      if (!question) throw new NotFoundException('Question not found');
-      if (question.authorId !== approverId)
-        throw new ForbiddenException(
-          'Only the question author can approve an answer',
-        );
-      if (question.status === 'Verified')
-        throw new BadRequestException('Question already verified');
-
-      const answer = await tx.answer.findUnique({
-        where: { id: answerId },
-        include: { author: { select: { primaryWallet: true, id: true } } },
-      });
-
-      // console.log({
-      //   question,
-      //   answer,
-      // });
-
-      if (!answer) throw new NotFoundException('Answer not found');
-      if (answer.questionId !== questionId)
-        throw new BadRequestException(
-          'Answer does not belong to this question',
-        );
-      if (!answer.author.primaryWallet)
-        throw new BadRequestException('Answer author has no connected wallet.');
-
-      if (!question.chainQId)
-        throw new BadRequestException(
-          'No on-chain question ID found for this question',
-        );
-
-      if (question.chainQId == null)
-        throw new BadRequestException('No on-chain question ID found');
-      if (answer.chainAId == null)
-        throw new BadRequestException('No on-chain answer ID found');
-
-      // console.log({
-      //   chainQId: question.chainQId,
-      //   chainAId: answer.chainAId,
-      // });
-
-      // Chain interaction FIRST (before writing success to DB)
-      const txReceipt = await this.signerService.rewardUser(
-        question.chainQId,
-        answer.chainAId,
+    if (!question) throw new NotFoundException('Question not found');
+    if (question.authorId !== approverId)
+      throw new ForbiddenException(
+        'Only the question author can approve an answer',
       );
+    if (question.status === 'Verified')
+      throw new BadRequestException('Question already verified');
 
-      //If chain succeeded, update DB
+    const answer = await this.prisma.answer.findUnique({
+      where: { id: answerId },
+      include: { author: { select: { primaryWallet: true, id: true } } },
+    });
+
+    if (!answer) throw new NotFoundException('Answer not found');
+    if (answer.questionId !== questionId)
+      throw new BadRequestException('Answer does not belong to this question');
+    if (!answer.author.primaryWallet)
+      throw new BadRequestException('Answer author has no connected wallet.');
+    if (!question.chainQId || !answer.chainAId)
+      throw new BadRequestException('No on-chain IDs found');
+
+  
+    const txReceipt = await this.signerService.rewardUser(
+      question.chainQId,
+      answer.chainAId,
+    );
+
+    return this.prisma.$transaction(async (tx) => {
       await tx.answer.update({
         where: { id: answerId },
         data: { isBest: true },
