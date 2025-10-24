@@ -148,6 +148,7 @@ export class QuestionsController {
     if (question.authorId !== user.id)
       throw new ForbiddenException('You can only delete your own question.');
 
+    // ✅ Only check if status is Open
     if (question.status !== 'Open')
       throw new BadRequestException('Only open questions can be deleted.');
 

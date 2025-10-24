@@ -363,24 +363,32 @@ export class QuestionsService {
     const q = await this.prisma.question.findUnique({ where: { id } });
     if (!q) throw new NotFoundException('Question not found.');
 
+    // ✅ Only check if status is Open
     if (q.status !== 'Open') {
-      throw new BadRequestException('Only open questions can be closed.');
+      throw new BadRequestException('Only open questions can be deleted.');
     }
 
     let txHash: string | undefined = undefined;
+    let refunded = false;
 
-    // If question has on-chain bounty, refund it
+    // Always try to refund bounty if it exists on-chain
     if (q.chainQId != null && BigInt(q.bountyAmountWei) > 0n) {
-      const receipt = await this.signerService.cancelQuestion(q.chainQId);
-      txHash = receipt.transactionHash;
+      try {
+        const receipt = await this.signerService.cancelQuestion(q.chainQId);
+        txHash = receipt.transactionHash;
+        refunded = true;
 
-      await this.ledgerService.addEntry({
-        userId: q.authorId,
-        questionId: q.id,
-        kind: 'BountyRefund',
-        amountWei: q.bountyAmountWei,
-        txHash, //now guaranteed string | undefined
-      });
+        await this.ledgerService.addEntry({
+          userId: q.authorId,
+          questionId: q.id,
+          kind: 'BountyRefund',
+          amountWei: q.bountyAmountWei,
+          txHash,
+        });
+      } catch (error) {
+        console.error('Failed to cancel on-chain:', error);
+        // Continue with soft delete even if on-chain cancellation fails
+      }
     }
 
     // Soft delete
@@ -394,10 +402,15 @@ export class QuestionsService {
 
     publish('question:closed', { id: closed.id });
 
+    const message = refunded
+      ? 'Question deleted and bounty refunded successfully.'
+      : 'Question deleted successfully.';
+
     return {
-      message: 'Question closed successfully.',
+      message,
       txHash,
       status: closed.status,
+      refunded,
     };
   }
 
