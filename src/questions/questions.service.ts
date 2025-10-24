@@ -222,18 +222,69 @@ export class QuestionsService {
   async update(id: number, dto: UpdateQuestionDto) {
     const question = await this.prisma.question.findUnique({ where: { id } });
     if (!question) throw new NotFoundException('Question not found.');
-    if (question.status !== 'Open') {
+    if (question.status !== 'Open')
       throw new BadRequestException('Only open questions can be edited.');
+
+    const updateData: any = {
+      updatedAt: new Date(),
+    };
+
+    // Update title & body if provided
+    if (dto.title !== undefined) updateData.title = dto.title;
+    if (dto.bodyMd !== undefined) updateData.bodyMd = dto.bodyMd;
+
+    // === BOUNTY HANDLING ===
+    if (dto.bounty !== undefined) {
+      const newBountyEth = parseFloat(dto.bounty);
+      const newBountyWei = BigInt(Math.floor(newBountyEth * 1e18));
+      const oldBountyWei = BigInt(question.bountyAmountWei || '0');
+
+      if (newBountyWei > oldBountyWei) {
+        // 🟢 Increase bounty on-chain
+        const addWei = newBountyWei - oldBountyWei;
+        if (!question.chainQId)
+          throw new BadRequestException('Question not yet on-chain.');
+
+        await this.signerService.fundMore(Number(question.chainQId), addWei);
+
+        updateData.bountyAmountWei = newBountyWei.toString();
+      } else if (newBountyWei < oldBountyWei) {
+        // 🔴 Reduce bounty on-chain
+        const reduceWei = oldBountyWei - newBountyWei;
+        if (!question.chainQId)
+          throw new BadRequestException('Question not yet on-chain.');
+
+        await this.signerService.reduceBounty(
+          Number(question.chainQId),
+          reduceWei,
+        );
+
+        updateData.bountyAmountWei = newBountyWei.toString();
+      }
     }
 
-    // Only text/content edit here. Bounty edits use separate endpoints below.
-    return this.prisma.question.update({
+    const updated = await this.prisma.question.update({
       where: { id },
-      data: {
-        ...dto,
-        updatedAt: new Date(),
-      },
+      data: updateData,
     });
+
+    // 🔄 Refresh live bounty from chain if question is on-chain
+    if (updated.chainQId != null) {
+      try {
+        const bountyOnChain = await this.signerService.contract.bountyOf(
+          updated.chainQId,
+        );
+        updated.bountyAmountWei = bountyOnChain.toString();
+      } catch (error) {
+        // Log error but don't fail the update
+        console.warn(
+          `Failed to fetch bounty for chainQId ${updated.chainQId}:`,
+          error.message,
+        );
+      }
+    }
+
+    return updated;
   }
 
   async addBounty(id: number, addEth: number) {
@@ -336,7 +387,7 @@ export class QuestionsService {
     const closed = await this.prisma.question.update({
       where: { id },
       data: {
-        status: 'Closed',
+        status: 'Cancelled',
         updatedAt: new Date(),
       },
     });
