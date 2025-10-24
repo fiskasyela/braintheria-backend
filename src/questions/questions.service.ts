@@ -117,6 +117,9 @@ export class QuestionsService {
         answers: {
           select: { id: true, authorId: true, isBest: true, contentHash: true },
         },
+        author: {
+          select: { id: true, name: true, primaryWallet: true },
+        },
       },
     });
     if (!q) return null;
@@ -140,10 +143,8 @@ export class QuestionsService {
     const limit = params?.limit ?? 10;
     const where: any = {};
 
-    // Filter by user if provided
     if (params?.userId) where.authorId = params.userId;
 
-    // Filter by status if valid
     if (
       params?.status &&
       ['Open', 'Verified', 'Cancelled'].includes(params.status)
@@ -159,7 +160,7 @@ export class QuestionsService {
         orderBy: { createdAt: 'desc' },
         include: {
           author: {
-            select: { id: true, email: true, primaryWallet: true },
+            select: { id: true, name: true, primaryWallet: true },
           },
         },
       }),
