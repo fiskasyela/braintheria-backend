@@ -12,6 +12,7 @@ import { SseModule } from './sse/sse.module';
 import { ChainModule } from './chain/chain.module';
 import { IpfsModule } from './ipfs/ipfs.module';
 import { HashingModule } from './hashing/hashing.module';
+import { LeaderboardModule } from './leaderboard/leaderboard.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { HashingModule } from './hashing/hashing.module';
     ChainModule,
     IpfsModule,
     HashingModule,
+    LeaderboardModule,
   ],
 })
 export class AppModule {}
