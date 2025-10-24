@@ -109,8 +109,9 @@ export class QuestionsController {
 
   @Get(':id')
   @UseGuards(JwtAuthGuard)
-  getById(@Param('id') id: string) {
-    return this.svc.getById(Number(id));
+  async getById(@Param('id') id: string, @Req() req?: Request) {
+    const userId = (req as any)?.user?.id || (req as any)?.user?.sub;
+    return this.svc.getById(Number(id), userId);
   }
 
   @Patch(':id')

@@ -110,7 +110,7 @@ export class QuestionsService {
     return { ...updated, bountyWei: bountyOnChain };
   }
 
-  async getById(id: number) {
+  async getById(id: number, tokenUserId?: number) {
     const q = await this.prisma.question.findUnique({
       where: { id },
       include: {
@@ -130,7 +130,12 @@ export class QuestionsService {
       bountyWei = (await this.chainRead.bountyOf(q.chainQId)).toString();
     }
 
-    return { ...q, bountyWei, bestAId };
+    return {
+      ...q,
+      bountyWei,
+      bestAId,
+      isAuthor: tokenUserId === q.authorId, // Add isAuthor here
+    };
   }
 
   async list(params?: {
@@ -139,7 +144,7 @@ export class QuestionsService {
     limit?: number;
     status?: string;
     search?: string;
-    tokenUserId?: number; // ← ID from decoded token
+    tokenUserId?: number;
   }) {
     const page = params?.page ?? 1;
     const limit = params?.limit ?? 10;
